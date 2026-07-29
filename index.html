@@ -70,8 +70,11 @@ function solidMove(a,dt){
     const overlapsX=a.x<p.x+p.w&&a.x+a.w>p.x;
     const crossedTop=previousY+a.h<=p.y&&a.y+a.h>=p.y;
     const crossedBottom=previousY>=p.y+p.h&&a.y<=p.y+p.h;
-    const floorHit=overlapsX&&crossedTop;
-    const ceilingHit=a.x+10<p.x+p.w&&a.x+a.w-10>p.x&&crossedBottom;
+    // 主人公だけ台の下を通す。敵・ラスボスは従来の重なり判定で確実に台上へ留める。
+    const floorHit=a===player ? overlapsX&&crossedTop : overlapsX&&a.y<p.y+p.h&&a.y+a.h>p.y;
+    const ceilingHit=a===player
+      ?a.x+10<p.x+p.w&&a.x+a.w-10>p.x&&crossedBottom
+      :a.x+10<p.x+p.w&&a.x+a.w-10>p.x&&a.y<p.y+p.h&&a.y+a.h>p.y;
     if((a.vy>=0?floorHit:ceilingHit)){if(a.vy>=0){a.y=p.y-a.h;a.grounded=true}else a.y=p.y+p.h;a.vy=0;}
   }
 }
