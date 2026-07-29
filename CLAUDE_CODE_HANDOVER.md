@@ -41,17 +41,20 @@
 ## アセット
 
 - `BGM.mp3`: ループBGM
-- `エナドリ.mp3`: エナドリの取得・使用時SE（macOS上では濁点が分解されたファイル名）
+- `エナドリ.mp3`: エナドリの取得・使用時SE
 - `hero-normal.png`, `hero-super.png`: 主人公状態
+- `hero-hold.png`, `hero-throw.png`: 空き缶の所持・投擲モーション
 - `general.png`, `wizard.png`, `thrower.png`: 敵職種
 - `boss.png`, `boss-throw.png`, `boss-phase2.png`: ラスボス
 - `caffeine-warning.png`: 最終連打30回時の呆れたラスボス警告画
 - `awakening.png`: エナドリ取得時の覚醒カットイン
 - `energy-grid.png`: 10種類のエナドリ。Canvasで切り出している。
+- `10144.jpg`: クリア画面「帰宅！快眠！」の背景
 
 ## 実装上の注意
 
 - ゲームの状態は `state` 文字列で管理している。状態を増やす場合は `update()` と `draw()` の両方に必ず分岐を追加する。
 - キャラクターの足場判定は `solidMove()`、戦闘接触は `playerHitbox()`。見た目のサイズと戦闘判定を混同しない。
-- `playEnergySound()` を呼ぶのは「エナドリの取得または使用」のすべての箇所。新しいエナドリ操作を追加したら必ず呼ぶ。
+- `playEnergySound()` を呼ぶのは「エナドリの取得または使用」のすべての箇所。新しいエナドリ操作を追加したら必ず呼ぶ。空き缶の入手は `gainCan()` に一本化してあるので、新しい入手経路もこれを通す。
 - GitHub Pages公開物なので、`index.html` から参照するアセットは必ずリポジトリにコミットする。
+- 日本語ファイル名（`エナドリ.mp3`）は **NFC** で書く。macOSのファイルシステムは正規化を吸収するためローカルでは気づけないが、GitHub Pages はバイト一致で配信するため、NFD（濁点が分解された形）で参照すると404になりSEが鳴らなくなる。検証: `python3 -c "import unicodedata,re;h=open('index.html',encoding='utf-8').read();print([unicodedata.is_normalized('NFC',v) for v in re.findall(r\"new Audio\('([^']*)'\)\",h)])"`
