@@ -81,10 +81,11 @@ function solidMove(a,dt){
 function lose(t){if(state!=='play')return;state='lose';setStatus(t+'　Rキーでやり直し');}
 function takeHit(t){
   if(player.inv>0)return;
-  // ラスボス戦では缶を2本消費して攻撃を受け止める。足りなければゲームオーバー。
+  // ラスボス戦では缶を消費して攻撃を受け止める。第2形態は3本必要。
   if(stage===2&&state==='play'){
-    if(player.cans>=2){player.cans-=2;player.inv=1.25;setStatus(`攻撃を缶で防いだ！ 残り ${player.cans}/9`);}
-    else lose(`${t}　エナドリが2本足りない！`);
+    const cost=boss&&boss.phase===2?3:2;
+    if(player.cans>=cost){player.cans-=cost;player.inv=1.25;setStatus(`攻撃を缶${cost}本で防いだ！ 残り ${player.cans}/9`);}
+    else lose(`${t}　エナドリが${cost}本足りない！`);
     return;
   }
   if(player.super){player.super=false;player.inv=1.25;setStatus('スーパー勇者の力が切れた！ 通常勇者で耐えた！');}else lose(t);
@@ -109,7 +110,11 @@ function updateStage1(dt){for(const e of workers){if(e.dead)continue;const d=pla
   if(hit(playerHitbox(),e)){if(player.vy>90&&player.y+player.h-e.y<27){e.dead=true;player.vy=-510;const n=workers.filter(v=>!v.dead).length;setStatus(n?`上司を撃破！ 残り ${n} 人`:'上司を全員撃破！ 一番右端の会議室へ向かえ！')}else if(player.inv<=0)takeHit('上司に捕まり、残業になってしまった…')}
   // 上司を倒し切る必要はない。会議室へ着けば第2ステージへ進める。
   if(player.x>stage1W-155&&transition===0)transition=2.1;}}
-function spawnCan(px,py,type){pickups.push({x:px,y:py,w:28,h:42,type:type%10,vy:-80,life:14});}
+function spawnCan(px,py,type){
+  // ラスボス戦の盤上に存在できる空き缶は最大9本。
+  if(stage===2&&pickups.length>=9)return;
+  pickups.push({x:px,y:py,w:28,h:42,type:type%10,vy:-80,life:14});
+}
 // 空き缶（＝エナドリ）を手に入れる唯一の入口。取得SEは必ずここで鳴らす。
 function gainCan(label){player.cans=Math.min(9,player.cans+1);playEnergySound();setStatus(`${label} ストック ${player.cans}/9`);}
 function fireVomit(count){for(let i=0;i<count;i++){const spread=i-(count-1)/2;projectiles.push({x:boss.x+(boss.dir<0?0:boss.w-18),y:boss.y+60,w:18,h:12,vx:boss.dir*(BULLET_SPEED+Math.abs(spread)*16),vy:spread*42-90,kind:'vomit'});}}
