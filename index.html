@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>社畜RPG：定時退社の戦い</title>
+  <style>
+    *{box-sizing:border-box} body{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at top,#435f86,#111827 70%);font-family:system-ui,sans-serif;color:#fff}
+    main{width:min(100%,1040px);padding:16px} header{display:flex;justify-content:space-between;gap:12px;align-items:baseline;margin:0 0 9px} h1{margin:0;color:#ffe59c;font-size:clamp(1.1rem,3vw,1.9rem);letter-spacing:.06em} p{margin:0;color:#dae5f7;font-size:.9rem} canvas{display:block;width:100%;height:auto;border:4px solid #f2d77f;border-radius:12px;background:#dfeaf1;box-shadow:0 20px 55px #0009}.note{text-align:center;margin-top:9px}kbd{background:#26334a;border:1px solid #90a4c5;border-radius:4px;padding:2px 6px}
+  </style>
+</head>
+<body><main>
+  <header><h1>社畜RPG：定時退社の戦い</h1><p id="status" aria-live="polite">上司を倒し、定時退社を勝ち取れ！</p></header>
+  <canvas id="game" width="1000" height="560"></canvas>
+  <p class="note"><kbd>←</kbd><kbd>→</kbd>移動　<kbd>↑</kbd>ジャンプ　<kbd>Z</kbd>エナドリを投げる（第2ステージ）　<kbd>R</kbd>リスタート</p>
+</main>
+<script>
+(() => {
+'use strict';
+const c=document.querySelector('#game'),x=c.getContext('2d'),W=c.width,H=c.height,status=document.querySelector('#status');
+const keys=new Set(), imgs={};
+for(const [k,v] of Object.entries({normal:'hero-normal.png',super:'hero-super.png',hold:'hero-hold.png',throw:'hero-throw.png',general:'general.png',wizard:'wizard.png',thrower:'thrower.png',boss:'boss.png',bossThrow:'boss-throw.png',energy:'energy-grid.png',awakening:'awakening.png',home:'10144.jpg'})){imgs[k]=new Image();imgs[k].src=v;}
+const bgm=new Audio('BGM.mp3'); bgm.loop=true; bgm.volume=.42; let audioStarted=false;
+let stage,state,player,workers,boss,minions,pickups,projectiles,boosts,camera,transition,homeFade,movers,jumpPads,introTime,awakenTime,last=0;
+const ground=480, stage1W=3000, stage2W=1600;
+const PLAYER_MAX_SPEED=340, BULLET_SPEED=PLAYER_MAX_SPEED*.75, PROJECTILE_LIFETIME=5;
+// 高低差のあるデスク、コピー機台、書類棚。高所はジャンプ台や動く台で攻略できる。
+const platforms1=[{x:0,y:ground,w:480,h:80},{x:630,y:ground,w:450,h:80},{x:1210,y:ground,w:390,h:80},{x:1730,y:ground,w:480,h:80},{x:2350,y:ground,w:650,h:80},{x:235,y:385,w:155,h:22},{x:560,y:410,w:115,h:22},{x:735,y:345,w:135,h:22},{x:965,y:280,w:145,h:22},{x:1300,y:375,w:150,h:22},{x:1515,y:300,w:130,h:22},{x:1840,y:390,w:150,h:22},{x:2050,y:320,w:130,h:22},{x:2440,y:355,w:150,h:22},{x:2700,y:270,w:160,h:22}];
+const platforms2=[{x:0,y:ground,w:1600,h:80},{x:230,y:380,w:190,h:24},{x:650,y:315,w:190,h:24},{x:1120,y:370,w:180,h:24}];
+const clamp=(n,a,b)=>Math.max(a,Math.min(b,n)); const hit=(a,b)=>a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;
+// 見た目より少し内側を使う、戦闘専用の主人公当たり判定。足場判定は従来のまま。
+const playerHitbox=()=>({x:player.x+11,y:player.y+12,w:player.w-22,h:player.h-18});
+const activePlatforms=()=>stage===1?platforms1.concat(movers||[]):platforms2;
+function setStatus(t){status.textContent=t}
+function startAudio(){if(!audioStarted){audioStarted=true;bgm.play().catch(()=>{audioStarted=false;});}}
+function newPlayer(){return{x:82,y:330,w:54,h:80,vx:0,vy:0,grounded:false,face:1,cans:0,throwTime:0,inv:0,super:true}}
+function reset(){stage=1;state='play';player=newPlayer();
+  // 全12人。持ち場を離して配置するため、通常の一画面には約2〜4人しか現れない。
+  const roster=[
+    ['general',330,413],['wizard',760,278],['thrower',1010,213],['general',1360,308],
+    ['wizard',1535,233],['thrower',1870,323],['general',2040,253],['thrower',2705,203]
+  ];
+  workers=roster.map(([type,px,py],i)=>({type,x:px,y:py,home:px,homeY:py,w:type==='general'?51:58,h:type==='general'?67:76,vx:0,vy:0,dir:i%2?-1:1,grounded:false,timer:1+i*.13,jumpTimer:1.4+i*.1,dead:false}));
+  movers=[{x:485,y:390,w:92,h:18,baseX:485,range:105,speed:1.3,phase:0,moving:true},{x:1110,y:395,w:90,h:18,baseX:1110,range:90,speed:1.7,phase:1,moving:true},{x:2215,y:330,w:96,h:18,baseX:2215,range:100,speed:1.15,phase:2,moving:true}];
+  jumpPads=[{x:420,y:456,w:44,h:24},{x:1018,y:456,w:44,h:24},{x:1570,y:456,w:44,h:24},{x:2160,y:456,w:44,h:24}];
+  // 中身入りのエナドリは床を自走。穴の手前で反転して落下しない。
+  boosts=[{x:165,y:438,w:28,h:42,vx:76,type:1},{x:700,y:438,w:28,h:42,vx:-70,type:3},{x:1280,y:438,w:28,h:42,vx:82,type:5},{x:1785,y:438,w:28,h:42,vx:-75,type:7},{x:2520,y:438,w:28,h:42,vx:78,type:9}];
+  boss=null;minions=[];pickups=[];projectiles=[];camera=0;transition=0;homeFade=0;awakenTime=0;setStatus('第1ステージ：スーパー勇者で開始！ 画面の一番右端にある会議室へ進め。');}
+function solidMove(a,dt){
+  // 横方向と天井方向は当たりを内側へ絞り、角や壁に引っかかりにくくする。
+  a.x+=a.vx*dt;
+  for(const p of activePlatforms()){
+    const sideHit=a.x<p.x+p.w&&a.x+a.w>p.x&&a.y+16<p.y+p.h&&a.y+a.h-10>p.y;
+    if(sideHit){if(a.vx>0)a.x=p.x-a.w;else if(a.vx<0)a.x=p.x+p.w;a.vx=0;}
+  }
+  a.grounded=false;a.y+=a.vy*dt;
+  for(const p of activePlatforms()){
+    const floorHit=a.x<p.x+p.w&&a.x+a.w>p.x&&a.y<p.y+p.h&&a.y+a.h>p.y;
+    const ceilingHit=a.x+10<p.x+p.w&&a.x+a.w-10>p.x&&a.y<p.y+p.h&&a.y+a.h>p.y;
+    if((a.vy>=0?floorHit:ceilingHit)){if(a.vy>=0){a.y=p.y-a.h;a.grounded=true}else a.y=p.y+p.h;a.vy=0;}
+  }
+}
+function lose(t){if(state!=='play')return;state='lose';setStatus(t+'　Rキーでやり直し');}
+function takeHit(t){if(player.inv>0)return;if(player.super){player.super=false;player.inv=1.25;setStatus('スーパー勇者の力が切れた！ 通常勇者で耐えた！');}else lose(t);}
+function beginBoss(){stage=2;transition=2.3;player=newPlayer();player.super=false;player.x=120;jumpPads=[];movers=[];boosts=[];boss={x:1150,y:260,w:156,h:210,vx:-90,vy:0,dir:-1,grounded:false,hp:10,maxHp:10,phase:1,action:0,shot:2.5,jump:3.7,summon:5,hit:0};minions=[];pickups=[];projectiles=[];camera=0;setStatus('第2ステージ：空き缶を集め、ラスボスを倒せ！');}
+function win(){state='clear';homeFade=0;setStatus('帰宅！快眠！');}
+function updateGimmicks(dt){if(stage!==1)return;for(const p of movers){p.phase+=dt*p.speed;p.x=p.baseX+Math.sin(p.phase)*p.range;}}
+function floorAhead(px){return platforms1.some(p=>p.y===ground&&px>p.x+5&&px<p.x+p.w-5);}
+function updateBoosts(dt){if(stage!==1)return;for(const b of boosts){const next=b.x+b.vx*dt;if(!floorAhead(next+b.w/2))b.vx*=-1;else b.x=next;if(hit(playerHitbox(),b)){b.got=true;player.super=true;awakenTime=.5;setStatus('エナドリを飲んだ！ 目ががん開き、スーパー勇者に変身！');}}boosts=boosts.filter(b=>!b.got);}
+function updatePlayer(dt){const a=1950;if(keys.has('ArrowLeft')){player.vx-=a*dt;player.face=-1}if(keys.has('ArrowRight')){player.vx+=a*dt;player.face=1}if(!keys.has('ArrowLeft')&&!keys.has('ArrowRight'))player.vx*=Math.pow(.0005,dt);player.vx=clamp(player.vx,-PLAYER_MAX_SPEED,PLAYER_MAX_SPEED);player.vy+=1650*dt;player.inv=Math.max(0,player.inv-dt);player.throwTime=Math.max(0,player.throwTime-dt);solidMove(player,dt);for(const pad of jumpPads||[])if(hit(player,pad)&&player.vy>=0){player.vy=-880;player.grounded=false;}if(player.y>H+90)lose('穴に落ちてしまった…');}
+function enemySafe(e){if(e.y>H+60){e.x=e.home;e.y=e.homeY;e.vx=0;e.vy=0;}}
+function updateStage1(dt){for(const e of workers){if(e.dead)continue;const d=player.x-e.x,seen=Math.abs(d)<520,dist=Math.abs(d);e.timer-=dt;e.jumpTimer-=dt;
+  if(e.type==='general'){
+    if(seen)e.dir=Math.sign(d)||e.dir;else if(e.x<e.home-70)e.dir=1;else if(e.x>e.home+70)e.dir=-1;
+    e.vx=e.dir*(seen?105:35);e.vy+=1650*dt;solidMove(e,dt); // 一般は穴・足場から普通に落ちる。
+  }else{
+    // 魔法使いと投擲主はプレイヤーと約260pxの間合いを保ち、落下時は持ち場へ戻る。
+    if(seen){e.dir=Math.sign(d)||e.dir;e.vx=dist>300?e.dir*88:dist<210?-e.dir*88:0;}else{e.vx=(e.home-e.x)*.8;}
+    if(e.grounded&&e.jumpTimer<0){e.vy=-610;e.jumpTimer=1.35+Math.random()*.7;}e.vy+=1650*dt;solidMove(e,dt);enemySafe(e);
+    if(seen&&e.timer<0){if(e.type==='wizard'){projectiles.push({x:e.x+e.w/2,y:e.y+26,w:18,h:18,vx:e.dir*BULLET_SPEED,vy:0,kind:'magic'});e.timer=1.5;}else{const flight=.82,dx2=player.x-e.x;projectiles.push({x:e.x+e.w/2,y:e.y+20,w:20,h:16,vx:clamp(dx2/flight,-BULLET_SPEED,BULLET_SPEED),vy:(player.y-e.y-0.5*900*flight*flight)/flight,kind:'arc'});e.timer=2.05;}}
+  }
+  if(hit(playerHitbox(),e)){if(player.vy>90&&player.y+player.h-e.y<27){e.dead=true;player.vy=-510;const n=workers.filter(v=>!v.dead).length;setStatus(n?`上司を撃破！ 残り ${n} 人`:'上司を全員撃破！ 一番右端の会議室へ向かえ！')}else if(player.inv<=0)takeHit('上司に捕まり、残業になってしまった…')}
+  // 上司を倒し切る必要はない。会議室へ着けば第2ステージへ進める。
+  if(player.x>stage1W-155&&transition===0)transition=2.1;}}
+function spawnCan(px,py,type){pickups.push({x:px,y:py,w:28,h:42,type:type%10,vy:-80,life:14});}
+function fireVomit(count){for(let i=0;i<count;i++){const spread=i-(count-1)/2;projectiles.push({x:boss.x+(boss.dir<0?0:boss.w-18),y:boss.y+60,w:18,h:12,vx:boss.dir*(BULLET_SPEED+Math.abs(spread)*16),vy:spread*42-90,kind:'vomit'});}}
+function fireLaser(){const beamW=560;projectiles.push({x:boss.dir<0?boss.x-beamW:boss.x+boss.w,y:boss.y+78,w:beamW,h:18,vx:0,vy:0,kind:'laser',life:.65});}
+function summonMinion(){const type=['general','wizard','thrower'][Math.floor(Math.random()*3)];minions.push({type,x:boss.x+(boss.dir<0?boss.w+18:-65),y:360,w:50,h:66,vx:0,vy:0,dir:boss.dir,grounded:false,dead:false});}
+function updateMinions(dt){for(const m of minions){if(m.dead)continue;const d=player.x-m.x;m.dir=Math.sign(d)||m.dir;m.vx=m.dir*125;m.vy+=1650*dt;solidMove(m,dt);if(m.y>H+50){m.dead=true;continue}if(hit(playerHitbox(),m)){if(player.vy>90&&player.y+player.h-m.y<27){m.dead=true;player.vy=-460;setStatus('子分を踏みつけた！')}else if(player.inv<=0)takeHit('子分に足止めされた！')}}minions=minions.filter(m=>!m.dead);}
+function updateBoss(dt){if(transition>0)return;boss.action=Math.max(0,boss.action-dt);boss.shot-=dt;boss.jump-=dt;boss.summon-=dt;const dx=player.x-boss.x;if(Math.abs(dx)>190)boss.vx=(Math.sign(dx)||boss.dir)*(boss.phase===2?145:105);else boss.vx*=.85;boss.dir=Math.sign(dx)||boss.dir;if(boss.jump<0&&boss.grounded){boss.vy=-(boss.phase===2?880:770);boss.jump=(boss.phase===2?2.0:3.4)+Math.random()*1.2;}boss.vy+=1650*dt;solidMove(boss,dt);if(boss.shot<0){boss.action=.55;if(boss.phase===1){fireVomit(4);spawnCan(boss.x+boss.w/2,boss.y+70,Math.floor(Math.random()*10));boss.shot=2.1+Math.random();}else{const roll=Math.random();if(roll<.48)fireVomit(8);else if(roll<.78)fireLaser();else{fireVomit(6);summonMinion();}spawnCan(boss.x+boss.w/2,boss.y+70,Math.floor(Math.random()*10));spawnCan(boss.x+boss.w/2+35,boss.y+80,Math.floor(Math.random()*10));boss.shot=.65+Math.random()*.55;}}if(boss.phase===2&&boss.summon<0){summonMinion();summonMinion();boss.summon=3.6;}if(hit(playerHitbox(),boss)&&player.inv<=0)takeHit('ラスボスの圧で、残業確定…');for(const can of pickups){can.life-=dt;can.vy+=850*dt;can.y+=can.vy*dt;if(can.y+can.h>ground){can.y=ground-can.h;can.vy=0}if(player.cans<9&&hit(playerHitbox(),can)){player.cans++;can.got=true;setStatus(`空き缶を回収！ ストック ${player.cans}/9`);}}pickups=pickups.filter(v=>v.life>0&&!v.got);updateMinions(dt);}
+function throwCan(){if(stage!==2||player.cans<=0||state!=='play'||transition>0)return;player.cans--;player.throwTime=.26;projectiles.push({x:player.x+(player.face>0?player.w:0),y:player.y+25,w:25,h:34,vx:player.face*620,vy:-80,kind:'can',type:Math.floor(Math.random()*10)});}
+function updateProjectiles(dt){for(const q of projectiles){q.age=(q.age||0)+dt;q.x+=q.vx*dt;q.y+=(q.vy||0)*dt;q.vy=(q.vy||0)+((q.kind==='can')?470:q.kind==='arc'?900:q.kind==='vomit'?380:0)*dt;if(q.kind==='can'&&boss&&hit(q,boss)){boss.hp--;boss.hit=.22;q.dead=true;if(boss.hp<=0&&boss.phase===1){boss.phase=2;boss.hp=16;boss.maxHp=16;boss.shot=1;boss.jump=1;boss.summon=1.8;setStatus('ラスボス第2形態！ 攻撃が激化した！')}else if(boss.hp<=0)win();else setStatus(`ラスボスに命中！ HP ${boss.hp}/${boss.maxHp}`);}else if(q.kind!=='can'&&hit(q,playerHitbox())){if(q.kind!=='laser'&&player.vy>90&&player.y+player.h-q.y<23){q.dead=true;player.vy=-440;setStatus('投擲物を踏みつけて破壊！');}else if(player.inv<=0)takeHit(q.kind==='laser'?'レーザーに焼かれた！':q.kind==='vomit'?'ゲロ散弾を浴びた！':q.kind==='arc'?'投げつけられた書類が直撃！':'魔法のマウスに捕まった！');}}projectiles=projectiles.filter(q=>!q.dead&&q.age<(q.life||PROJECTILE_LIFETIME)&&q.x>-50&&q.x<(stage===1?stage1W:stage2W)+50&&q.y<H+100);}
+function update(dt){if(state==='intro'){introTime+=dt;if(introTime>18){state='play';setStatus('第1ステージ：スーパー勇者で開始！ 画面の一番右端にある会議室へ進め。');}return}if(state==='clear'){homeFade=clamp(homeFade+dt,0,1);return}if(state!=='play')return;if(awakenTime>0){awakenTime=Math.max(0,awakenTime-dt);return}if(transition>0){transition-=dt;if(transition<=0&&stage===1)beginBoss();return}updateGimmicks(dt);updatePlayer(dt);updateBoosts(dt);if(stage===1)updateStage1(dt);else updateBoss(dt);updateProjectiles(dt);camera=clamp(player.x-W*.38,0,(stage===1?stage1W:stage2W)-W);}
+function drawSprite(im,a,flip=false){if(!im.complete||!im.naturalWidth)return;x.save();x.translate(a.x+a.w/2,a.y+a.h/2);if(flip)x.scale(-1,1);const ir=im.width/im.height,ar=a.w/a.h;let dw,dh;if(ir>ar){dh=a.h;dw=dh*ir}else{dw=a.w;dh=dw/ir}x.drawImage(im,-dw/2,-dh/2,dw,dh);x.restore();}
+function office(world){x.fillStyle='#dceaf1';x.fillRect(0,0,world,480);for(let p=30;p<world;p+=280){x.fillStyle='#59778c';x.fillRect(p,44,215,202);x.fillStyle='#94cdea';x.fillRect(p+8,52,199,186);x.fillStyle='#66839a';for(let b=p+18;b<p+195;b+=28){const h=40+(b*7%100);x.fillRect(b,226-h,19,h)}}for(let p=0;p<world;p+=180){x.fillStyle='#fffde7';x.fillRect(p+26,15,108,13);x.fillStyle='#a8bac0';x.fillRect(p,258,165,8)}x.fillStyle='#b7c6cc';x.fillRect(0,466,world,14)}
+function desks(ps){for(const p of ps){x.fillStyle=p.y===ground?'#57656d':'#805a3f';x.fillRect(p.x,p.y,p.w,p.h);x.fillStyle=p.y===ground?'#74858d':'#c89155';x.fillRect(p.x,p.y,p.w,9);if(p.y!==ground){x.fillStyle='#49342c';x.fillRect(p.x+17,p.y+20,8,p.h-20);x.fillRect(p.x+p.w-25,p.y+20,8,p.h-20)}}}
+function drawEnergy(a,type){if(!imgs.energy.complete)return;const col=type%5,row=Math.floor(type/5),sw=imgs.energy.width/5,sh=imgs.energy.height/2;x.drawImage(imgs.energy,col*sw,row*sh,sw,sh,a.x,a.y,a.w,a.h)}
+function drawStage(){const world=stage===1?stage1W:stage2W;x.clearRect(0,0,W,H);x.save();x.translate(-camera,0);office(world);desks(activePlatforms());if(stage===1){for(const b of boosts)drawEnergy(b,b.type);for(const pad of jumpPads){x.fillStyle='#e85260';x.fillRect(pad.x,pad.y,pad.w,pad.h);x.fillStyle='#ffdf65';x.fillRect(pad.x+5,pad.y+7,pad.w-10,8);}x.fillStyle='#68757b';x.fillRect(stage1W-110,310,78,170);x.fillStyle='#c9e1e9';x.fillRect(stage1W-101,326,60,154);x.fillStyle='#bb4b4b';x.fillRect(stage1W-105,291,70,22);x.fillStyle='white';x.font='bold 11px system-ui';x.fillText('会議室',stage1W-93,306);for(const e of workers)if(!e.dead)drawSprite(imgs[e.type],e,e.dir>0)}else{for(const p of pickups)drawEnergy(p,p.type);for(const m of minions)drawSprite(imgs[m.type],m,m.dir>0);if(boss){drawSprite(boss.action>0?imgs.bossThrow:imgs.boss,boss,boss.dir>0);x.fillStyle='#251520';x.fillRect(boss.x,boss.y-18,boss.w,10);x.fillStyle=boss.phase===2?'#a93bff':'#e94b47';x.fillRect(boss.x,boss.y-18,boss.w*(boss.hp/boss.maxHp),10)}}for(const q of projectiles){if(q.kind==='can')drawEnergy(q,q.type);else if(q.kind==='laser'){x.fillStyle='#31eaffcc';x.fillRect(q.x,q.y,q.w,q.h);x.fillStyle='#fff';x.fillRect(q.x,q.y+6,q.w,5);}else if(q.kind==='vomit'){x.fillStyle='#66d44a';x.beginPath();x.ellipse(q.x+q.w/2,q.y+q.h/2,q.w/2,q.h/2,0,0,Math.PI*2);x.fill();}else{x.fillStyle=q.kind==='magic'?'#9e4de3':'#f7c24a';x.beginPath();x.arc(q.x+q.w/2,q.y+q.h/2,q.w/2,0,Math.PI*2);x.fill()}}const heroArt=player.throwTime>0?imgs.throw:player.cans>0?imgs.hold:player.super?imgs.super:imgs.normal; if(!player.inv||Math.floor(player.inv*12)%2===0)drawSprite(heroArt,player,player.face<0);x.restore();
+x.fillStyle='#142039d9';x.fillRect(14,14,stage===1?310:300,35);x.fillStyle='#fff2ba';x.font='bold 16px system-ui';x.fillText(stage===1?`第1ステージ　${player.super?'SUPER 勇者':'通常勇者'}　上司 残り ${workers.filter(v=>!v.dead).length}`:`第2形態 ${boss&&boss.phase===2?'怒りの':'通常'}ラスボス HP ${boss?boss.hp:10}/${boss?boss.maxHp:10}　缶 ${player.cans}/9`,27,37);
+if(transition>0){x.fillStyle='#07101bd9';x.fillRect(0,0,W,H);x.fillStyle='#ffe78d';x.textAlign='center';x.font='bold 44px system-ui';x.fillText(stage===1?'全上司撃破！':'最終決戦',W/2,H/2-12);x.fillStyle='white';x.font='21px system-ui';x.fillText(stage===1?'ラスボス室へ向かう…':'エナドリ缶で戦え！',W/2,H/2+28);x.textAlign='left'}
+}
+function drawIntro(){x.fillStyle='#02050d';x.fillRect(0,0,W,H);for(let i=0;i<120;i++){const sx=(i*83)%W,sy=(i*149)%H;x.fillStyle=i%5?'#d8edff':'#fff';x.fillRect(sx,sy,1+(i%3===0),1+(i%3===0));}x.textAlign='center';x.fillStyle='#ffe55a';x.font='bold 45px system-ui';x.fillText('社 畜 R P G',W/2,92);x.font='bold 20px system-ui';x.fillText('定時退社の戦い',W/2,124);const lines=['遠い銀河の、とあるOFFICE。','社畜ちうねは今日も、','いろんな人のFigma課題を','手伝い続けていた。','','しかし、依頼の数は多すぎる。','無限に届く修正、増え続けるコメント。','時計は無情に、定時を過ぎていく。','','「帰りたい……！」','','ちうねは上司たちを越え、','定時退社を勝ち取れるのか！？'];const y0=H+30-introTime*34;x.font='bold 26px serif';for(let i=0;i<lines.length;i++){const yy=y0+i*47,scale=clamp(1-(yy/H)*.34,.56,1.16);x.save();x.translate(W/2,yy);x.scale(scale,scale);x.fillText(lines[i],0,0);x.restore();}x.fillStyle='#ffffffcc';x.font='15px system-ui';x.fillText('Space または Enter でスキップ',W/2,H-25);x.textAlign='left';}
+function drawAwakening(){const p=1-awakenTime/.5,panelW=330,panelX=W+80-p*(W+panelW+160);x.save();x.fillStyle='#061022bb';x.fillRect(0,0,W,H);x.shadowColor='#32dfff';x.shadowBlur=28;x.drawImage(imgs.awakening,panelX,0,panelW,H);x.shadowBlur=0;x.fillStyle='#07132bc9';x.fillRect(panelX,0,panelW,H);x.textAlign='center';x.lineWidth=8;x.strokeStyle='#061226';x.fillStyle='#fff24c';x.font='bold 40px system-ui';x.strokeText('覚醒！',panelX+panelW/2,105);x.fillText('覚醒！',panelX+panelW/2,105);x.font='bold 35px system-ui';x.strokeText('ガンギマリ！',panelX+panelW/2,H-70);x.fillText('ガンギマリ！',panelX+panelW/2,H-70);x.textAlign='left';x.restore();}
+function draw(){if(state==='intro'){drawIntro();return}if(state==='clear'){x.drawImage(imgs.home,0,0,W,H);x.fillStyle='#07111ab3';x.fillRect(0,0,W,H);x.textAlign='center';x.fillStyle='#fff1a7';x.font='bold 55px system-ui';x.fillText('帰宅！快眠！',W/2,H/2);x.fillStyle='white';x.font='21px system-ui';x.fillText('定時退社を勝ち取った！　Rキーで最初から',W/2,H/2+48);x.textAlign='left';return}drawStage();if(awakenTime>0)drawAwakening();if(state==='lose'){x.fillStyle='#07101bdd';x.fillRect(0,0,W,H);x.textAlign='center';x.fillStyle='#ffb3a3';x.font='bold 48px system-ui';x.fillText('残業確定…',W/2,H/2-10);x.fillStyle='#fff';x.font='21px system-ui';x.fillText('Rキーでリスタート',W/2,H/2+35);x.textAlign='left'}}
+function frame(t){const dt=Math.min((t-last)/1000||0,.033);last=t;update(dt);draw();requestAnimationFrame(frame)}
+addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','ArrowUp','Space','KeyZ'].includes(e.code))e.preventDefault();startAudio();if(state==='intro'&&(e.code==='Space'||e.code==='Enter')){state='play';setStatus('第1ステージ：スーパー勇者で開始！ 画面の一番右端にある会議室へ進め。');return}if(e.code==='KeyR')reset();if(e.code==='ArrowUp'&&state==='play'&&transition<=0&&player.grounded){player.vy=-660;player.grounded=false}if(e.code==='KeyZ')throwCan();keys.add(e.code)});addEventListener('keyup',e=>keys.delete(e.code));
+reset();state='intro';introTime=0;requestAnimationFrame(frame);
+})();
+</script></body></html>
