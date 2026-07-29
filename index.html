@@ -70,7 +70,16 @@ function solidMove(a,dt){
   }
 }
 function lose(t){if(state!=='play')return;state='lose';setStatus(t+'　Rキーでやり直し');}
-function takeHit(t){if(player.inv>0)return;if(player.super){player.super=false;player.inv=1.25;setStatus('スーパー勇者の力が切れた！ 通常勇者で耐えた！');}else lose(t);}
+function takeHit(t){
+  if(player.inv>0)return;
+  // ラスボス戦では缶を2本消費して攻撃を受け止める。足りなければゲームオーバー。
+  if(stage===2&&state==='play'){
+    if(player.cans>=2){player.cans-=2;player.inv=1.25;setStatus(`攻撃を缶で防いだ！ 残り ${player.cans}/9`);}
+    else lose(`${t}　エナドリが2本足りない！`);
+    return;
+  }
+  if(player.super){player.super=false;player.inv=1.25;setStatus('スーパー勇者の力が切れた！ 通常勇者で耐えた！');}else lose(t);
+}
 function beginBoss(){stage=2;transition=2.3;player=newPlayer();player.super=false;player.x=120;jumpPads=[];movers=[];boosts=[];boss={x:1150,y:260,w:156,h:210,vx:-90,vy:0,dir:-1,grounded:false,hp:10,maxHp:10,phase:1,action:0,shot:2.5,jump:3.7,summon:5,hit:0};minions=[];pickups=[];projectiles=[];camera=0;setStatus('第2ステージ：空き缶を集め、ラスボスを倒せ！');}
 function win(){state='clear';homeFade=0;setStatus('帰宅！快眠！');}
 function updateGimmicks(dt){if(stage!==1)return;for(const p of movers){p.phase+=dt*p.speed;p.x=p.baseX+Math.sin(p.phase)*p.range;}}
@@ -102,7 +111,27 @@ function updateBoss(dt){if(transition>0)return;boss.action=Math.max(0,boss.actio
 // 床に落ちた空き缶の落下・寿命・回収。
 function updatePickups(dt){for(const can of pickups){can.life-=dt;can.vy+=850*dt;can.y+=can.vy*dt;if(can.y+can.h>ground){can.y=ground-can.h;can.vy=0}if(player.cans<9&&hit(playerHitbox(),can)){can.got=true;gainCan('空き缶を回収！');}}pickups=pickups.filter(v=>v.life>0&&!v.got);}
 function throwCan(){if(stage!==2||player.cans<=0||state!=='play'||transition>0)return;player.cans--;player.throwTime=.26;playEnergySound();projectiles.push({x:player.x+(player.face>0?player.w:0),y:player.y+25,w:25,h:34,vx:player.face*620,vy:-80,kind: 'can',type:Math.floor(Math.random()*10)});}
-function updateProjectiles(dt){for(const q of projectiles){q.age=(q.age||0)+dt;q.x+=q.vx*dt;q.y+=(q.vy||0)*dt;q.vy=(q.vy||0)+((q.kind==='can'||q.kind==='minionCan')?470:q.kind==='arc'?900:q.kind==='vomit'?380:0)*dt;if(q.kind==='can'&&boss&&hit(q,boss)){boss.hp--;boss.hit=.22;q.dead=true;if(boss.hp<=0&&boss.phase===1){boss.phase=2;boss.hp=16;boss.maxHp=16;boss.shot=1;boss.jump=1;boss.summon=1.8;state='phase2cut';sceneTimer=2.6;setStatus('ラスボス第2形態！ 攻撃が激化した！')}else if(boss.hp<=0){state='finalStory';sceneTimer=0;player.inv=999;setStatus('ラスボスはまだ諦めていない…');}else setStatus(`ラスボスに命中！ HP ${boss.hp}/${boss.maxHp}`);}else if(q.kind!=='can'&&hit(q,playerHitbox())){if(q.kind!=='laser'&&player.vy>90&&player.y+player.h-q.y<23){q.dead=true;player.vy=-440;setStatus('投擲物を踏みつけて破壊！');}else if(player.inv<=0)takeHit(q.kind==='laser'?'レーザーに焼かれた！':q.kind==='vomit'?'ゲロ散弾を浴びた！':q.kind==='minionCan'?'子分のエナドリ缶が直撃！':q.kind==='arc'?'投げつけられた書類が直撃！':'魔法のマウスに捕まった！');}}projectiles=projectiles.filter(q=>!q.dead&&q.age<(q.life||PROJECTILE_LIFETIME)&&q.x>-50&&q.x<(stage===1?stage1W:stage2W)+50&&q.y<H+100);}
+function updateProjectiles(dt){
+  for(const q of projectiles){
+    q.age=(q.age||0)+dt;q.x+=q.vx*dt;q.y+=(q.vy||0)*dt;
+    q.vy=(q.vy||0)+((q.kind==='can'||q.kind==='minionCan')?470:q.kind==='arc'?900:q.kind==='vomit'?380:0)*dt;
+    if(q.kind==='can'){
+      // 投げた缶は子分と全攻撃を消しても消滅せず、ラスボスまで飛び続ける。
+      for(const m of minions)if(!m.dead&&hit(q,m)){m.dead=true;setStatus('缶が子分を吹き飛ばした！');}
+      for(const target of projectiles)if(target!==q&&target.kind!=='can'&&!target.dead&&hit(q,target)){target.dead=true;}
+      if(boss&&hit(q,boss)){
+        boss.hp--;boss.hit=.22;q.dead=true;
+        if(boss.hp<=0&&boss.phase===1){boss.phase=2;boss.hp=16;boss.maxHp=16;boss.shot=1;boss.jump=1;boss.summon=1.8;state='phase2cut';sceneTimer=2.6;setStatus('ラスボス第2形態！ 攻撃が激化した！');}
+        else if(boss.hp<=0){state='finalStory';sceneTimer=0;player.inv=999;setStatus('ラスボスはまだ諦めていない…');}
+        else setStatus(`ラスボスに命中！ HP ${boss.hp}/${boss.maxHp}`);
+      }
+    }else if(hit(q,playerHitbox())){
+      if(q.kind!=='laser'&&player.vy>90&&player.y+player.h-q.y<23){q.dead=true;player.vy=-440;setStatus('投擲物を踏みつけて破壊！');}
+      else if(player.inv<=0)takeHit(q.kind==='laser'?'レーザーに焼かれた！':q.kind==='vomit'?'ゲロ散弾を浴びた！':q.kind==='minionCan'?'子分のエナドリ缶が直撃！':q.kind==='arc'?'投げつけられた書類が直撃！':'魔法のマウスに捕まった！');
+    }
+  }
+  projectiles=projectiles.filter(q=>!q.dead&&q.age<(q.life||PROJECTILE_LIFETIME)&&q.x>-50&&q.x<(stage===1?stage1W:stage2W)+50&&q.y<H+100);
+}
 function startFinalMash(){state='finalMash';finalTimer=60;mashCount=0;boss.grow=1;player.grow=1;playEnergySound();setStatus('最終手段：エナドリを摂取して対抗せよ！');}
 function mashEnergy(){if(state!=='finalMash')return;mashCount++;player.grow=Math.min(4.6,1+mashCount*.12);playEnergySound();if(mashCount>=30){state='caffeineBoss';setStatus('カフェインの摂りすぎで倒れてしまった…');}}
 function update(dt){if(state==='intro'){introTime+=dt;if(introTime>18){state='play';setStatus('第1ステージ：スーパー勇者で開始！ 画面の一番右端にある会議室へ進め。');}return}if(state==='clear'){homeFade=clamp(homeFade+dt,0,1);return}if(state==='caffeineHero'||state==='caffeineBoss')return;if(state==='phase2cut'){sceneTimer-=dt;if(sceneTimer<=0)state='play';return}if(state==='finalStory'){sceneTimer+=dt;if(sceneTimer<3)setStatus('ラスボス「くっ、このままだとちうねに帰られてしまう…！」');else if(sceneTimer<6)setStatus('ラスボス「最終手段だ！」');else startFinalMash();return}if(state==='finalMash'){finalTimer-=dt;boss.grow=Math.min(3.2,(boss.grow||1)+dt*.035);if(finalTimer<=0){state='bossDeath';sceneTimer=3.2;setStatus('ラスボスはエナドリを飲み過ぎて力尽きた…');}return}if(state==='bossDeath'){sceneTimer-=dt;if(sceneTimer<=0)win();return}if(state!=='play')return;if(awakenTime>0){awakenTime=Math.max(0,awakenTime-dt);return}if(transition>0){transition-=dt;if(transition<=0&&stage===1)beginBoss();return}updateGimmicks(dt);updatePlayer(dt);updateBoosts(dt);if(stage===1)updateStage1(dt);else updateBoss(dt);updateProjectiles(dt);camera=clamp(player.x-W*.38,0,(stage===1?stage1W:stage2W)-W);}
