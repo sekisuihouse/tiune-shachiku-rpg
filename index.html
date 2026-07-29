@@ -62,10 +62,16 @@ function solidMove(a,dt){
     const sideHit=a.x<p.x+p.w&&a.x+a.w>p.x&&a.y+16<p.y+p.h&&a.y+a.h-10>p.y;
     if(sideHit){if(a.vx>0)a.x=p.x-a.w;else if(a.vx<0)a.x=p.x+p.w;a.vx=0;}
   }
+  // 前フレームの位置を保持し、台の上から落下したときだけ着地させる。
+  // これにより、台の下を歩く際に上面へ吸い上げられない。
+  const previousY=a.y;
   a.grounded=false;a.y+=a.vy*dt;
   for(const p of activePlatforms()){
-    const floorHit=a.x<p.x+p.w&&a.x+a.w>p.x&&a.y<p.y+p.h&&a.y+a.h>p.y;
-    const ceilingHit=a.x+10<p.x+p.w&&a.x+a.w-10>p.x&&a.y<p.y+p.h&&a.y+a.h>p.y;
+    const overlapsX=a.x<p.x+p.w&&a.x+a.w>p.x;
+    const crossedTop=previousY+a.h<=p.y&&a.y+a.h>=p.y;
+    const crossedBottom=previousY>=p.y+p.h&&a.y<=p.y+p.h;
+    const floorHit=overlapsX&&crossedTop;
+    const ceilingHit=a.x+10<p.x+p.w&&a.x+a.w-10>p.x&&crossedBottom;
     if((a.vy>=0?floorHit:ceilingHit)){if(a.vy>=0){a.y=p.y-a.h;a.grounded=true}else a.y=p.y+p.h;a.vy=0;}
   }
 }
